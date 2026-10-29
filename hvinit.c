@@ -22,6 +22,7 @@
 #include <sys/sysmacros.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 #include <linux/reboot.h>
 
@@ -130,6 +131,13 @@ int main(int argc, char **argv) {
     if (mount("proc", "/proc", "proc", 0, opt) && mount("proc", "/proc", "proc", 0, NULL)) klog("mount /proc failed");
     mk("/sys", 0555);
     if (mount("sysfs", "/sys", "sysfs", 0, NULL)) klog("mount /sys failed");
+    /* init's SELinux setup (secilc writes to /sys/fs/selinux/null, policy load) needs selinuxfs */
+    mk("/sys/fs/selinux", 0755);
+    if (mount("selinuxfs", "/sys/fs/selinux", "selinuxfs", 0, NULL)) klog("mount selinuxfs failed: %s", strerror(errno));
+    else klog("mounted selinuxfs");
+    chmod("/proc/cmdline", 0440);
+    chown("/proc/cmdline", 0, AID_READPROC);
+    node("/dev/kmsg_debug", S_IFCHR | 0622, 1, 11);
 
     /* same scratch mounts Android's first stage creates */
     mk("/mnt", 0755);
@@ -148,6 +156,14 @@ int main(int argc, char **argv) {
     if (access("/system/bin/init", X_OK)) die("/system/bin/init missing or not executable");
     if (access("/system/bin/bootstrap/linker64", X_OK)) klog("WARNING: /system/bin/bootstrap/linker64 missing");
 
+    {
+        struct timespec ts;
+        char ns[32];
+        if (!clock_gettime(CLOCK_BOOTTIME, &ts)) {
+            snprintf(ns, sizeof ns, "%llu", (unsigned long long)ts.tv_sec * 1000000000ULL + ts.tv_nsec);
+            setenv("INIT_STARTED_AT", ns, 1);
+        }
+    }
     klog("exec /system/bin/init selinux_setup");
     char *const args[] = {"/system/bin/init", "selinux_setup", NULL};
     execv("/system/bin/init", args);
